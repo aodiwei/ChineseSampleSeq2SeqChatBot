@@ -33,7 +33,7 @@ def run():
         hook=data_process.upload_to_google_drive
     )
 
-    model.train((idx_q, idx_a), (testX, testY))
+    model.train((trainX, trainY), (testX, testY))
 
 
 if __name__ == '__main__':
