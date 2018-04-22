@@ -1,7 +1,7 @@
 # ChineseSampleSeq2SeqChatBot
 Chinese sample seq2seq chatbot
 
-#### 简单的中文聊天机器人模型，基于seq2seq
+#### 简单的中文聊天机器人模型，基于seq2seq,支持attention机制
 #### 数据较少，是基于疑是微软小冰对话结果的数据集,数据质量也不太好
 #### 效果过拟合
 
