@@ -1,5 +1,3 @@
-import tensorflow as tf
-
 from model import Seq2SeqModel
 import data_process
 
@@ -15,12 +13,22 @@ def run():
 
     xseq_len = trainX.shape[-1]
     yseq_len = trainY.shape[-1]
-    batch_size = 32
+    batch_size = 16
     xvocab_size = len(metadata['idx2w'])
     yvocab_size = xvocab_size
-    emb_dim = 512
+    emb_dim = 128
+    
+    print('xseq_len : {}'.format(xseq_len))
+    print('yseq_len : {}'.format(yseq_len))
+    print('batch_size : {}'.format(batch_size))
+    print('xvocab_size : {}'.format(xvocab_size))
+    print('yvocab_size : {}'.format(yvocab_size))
+    print('emb_dim : {}'.format(emb_dim))
+    print('train : {}'.format(len(trainX)))
+    print('test : {}'.format(len(testX)))
 
-    model = Seq2SeqModel(
+
+    model_seq = Seq2SeqModel(
         xseq_len=xseq_len,
         yseq_len=yseq_len,
         x_vocab_size=xvocab_size,
@@ -30,10 +38,11 @@ def run():
         ckpt_path='./model_ckp',
         metadata=metadata,
         batch_size=batch_size,
-        hook=data_process.upload_to_google_drive
+        mtype='attention',
+        # hook=data_process.upload_to_google_drive
     )
 
-    model.train((trainX, trainY), (testX, testY))
+    model_seq.train((idx_q, idx_a), (testX, testY))
 
 
 if __name__ == '__main__':

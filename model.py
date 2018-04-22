@@ -20,10 +20,11 @@ class Seq2SeqModel:
                  ckpt_path,
                  metadata,
                  lr=0.001,
-                 epochs=10000,
+                 epochs=200,
                  model_name='chatbot_model',
                  batch_size=64,
-                 hook=None
+                 hook=None,
+                 mtype=None
                  ):
         self.xseq_len = xseq_len
         self.yseq_len = yseq_len
@@ -52,23 +53,37 @@ class Seq2SeqModel:
 
         # LSTM网络
         self.keep_pro = tf.placeholder(tf.float32, name='keep_pro')
-        basic_cell = tf.contrib.rnn.BasicLSTMCell(emb_dim, state_is_tuple=True)
-        basic_cell = tf.contrib.rnn.DropoutWrapper(basic_cell, output_keep_prob=self.keep_pro)
+        cells = []
+        for _ in range(num_layers):
+            basic_cell = tf.contrib.rnn.BasicLSTMCell(emb_dim, state_is_tuple=True)
+            basic_cell = tf.contrib.rnn.DropoutWrapper(basic_cell, output_keep_prob=self.keep_pro)
+            cells.append(basic_cell)
         # 多层LSTM
-        stacked_lstm = tf.nn.rnn_cell.MultiRNNCell([basic_cell] * num_layers, state_is_tuple=True)
+        stacked_lstm = tf.nn.rnn_cell.MultiRNNCell(cells, state_is_tuple=True)
 
         # 解码seq
         with tf.variable_scope('decoder') as scope:
             # train
-            self.decode_outputs, self.decode_states = tf.contrib.legacy_seq2seq.embedding_rnn_seq2seq(
-                self.enc_ip, self.dec_ip, stacked_lstm, x_vocab_size, y_vocab_size, emb_dim)
+            if mtype is not None:  # attention seq2seq
+                self.decode_outputs, self.decode_states = tf.contrib.legacy_seq2seq.embedding_attention_seq2seq(
+                    self.enc_ip, self.dec_ip, stacked_lstm, x_vocab_size, y_vocab_size, emb_dim)
 
-            # 测试时需要共享参数
-            scope.reuse_variables()
-            # test 设置feed_previous=True 则解码输入第一个为GO，其他的的解码输入为前一个解码的输出
-            self.decode_outputs_test, self.decode_states_test = tf.contrib.legacy_seq2seq.embedding_rnn_seq2seq(
-                self.enc_ip, self.dec_ip, stacked_lstm, x_vocab_size, y_vocab_size, emb_dim,
-                feed_previous=True)
+                # 测试时需要共享参数
+                scope.reuse_variables()
+                # test 设置feed_previous=True 则解码输入第一个为GO，其他的的解码输入为前一个解码的输出
+                self.decode_outputs_test, self.decode_states_test = tf.contrib.legacy_seq2seq.embedding_attention_seq2seq(
+                    self.enc_ip, self.dec_ip, stacked_lstm, x_vocab_size, y_vocab_size, emb_dim,
+                    feed_previous=True)
+            else: # 普通rnn seq2seq
+                self.decode_outputs, self.decode_states = tf.contrib.legacy_seq2seq.embedding_rnn_seq2seq(
+                    self.enc_ip, self.dec_ip, stacked_lstm, x_vocab_size, y_vocab_size, emb_dim)
+
+                # 测试时需要共享参数
+                scope.reuse_variables()
+                # test 设置feed_previous=True 则解码输入第一个为GO，其他的的解码输入为前一个解码的输出
+                self.decode_outputs_test, self.decode_states_test = tf.contrib.legacy_seq2seq.embedding_rnn_seq2seq(
+                    self.enc_ip, self.dec_ip, stacked_lstm, x_vocab_size, y_vocab_size, emb_dim,
+                    feed_previous=True)
 
         # 最后一层，计算loss
         # 每一个label对应的权重
@@ -121,6 +136,7 @@ class Seq2SeqModel:
             sess.run(tf.global_variables_initializer())
             saver.restore(sess, ckpt.model_checkpoint_path)
             self.sess = sess
+            print('reload model {}'.format(ckpt.model_checkpoint_path))
         return saver
 
     def test_step(self, x, y, batch_size=None):
@@ -136,6 +152,7 @@ class Seq2SeqModel:
 
         batches = self.batch_gen(x, y, batch_size, 1)
         losses = []
+        dt = np.random.choice(range(9, 25))
         for batch in batches:
             test_x, test_y, _ = batch
             feed_dict = self.get_feed(test_x, test_y, keep_prob=1.)
@@ -143,7 +160,9 @@ class Seq2SeqModel:
             losses.append(loss_v)
             dec_op_v = np.array(dec_op_v).transpose([1, 0, 2])
             dec_op_v = np.argmax(dec_op_v, axis=2)
-            self.decode_to_text(test_x.T, dec_op_v, test_y.T)
+            idx = np.random.choice(range(len(dec_op_v)))
+            if idx % dt == 0:
+                self.decode_to_text([test_x.T[idx]], [dec_op_v[idx]], [test_y.T[idx]])
         return np.mean(losses)
 
     def decode_to_text(self, input, output, y=None):
@@ -209,16 +228,20 @@ class Seq2SeqModel:
                 loss, = self.sess.run([self.loss, ], feed_dict=feed_dict)
                 print('{} epoch: {} step: {} train loss: {}'.format(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()), epoch, step, loss))
 
-            if step % 500 == 0:
+            if step % 5000 == 0:
                 test_loss = self.test_step(test_set[0], test_set[1])
                 print('{} epoch: {} step: {} test loss: {}'.format(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()), epoch, step, test_loss))
+                
+            if step % 10000 == 0:
+                 saver.save(self.sess, os.path.join(self.ckpt_path, self.model_name + '.ckpt'), global_step=step)
+                 print('{} epoch: {} step: {} save ckpt'.format(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()), epoch, step))
 
-            if is_next_ep and epoch % 10 == 0:
-                saver.save(self.sess, os.path.join(self.ckpt_path, self.model_name + '.ckpt'), global_step=step)
-            elif is_next_ep:
+            if is_next_ep:
                 current_epoch = epoch
+                if epoch % 1 == 0:
+                    saver.save(self.sess, os.path.join(self.ckpt_path, self.model_name + '.ckpt'), global_step=step)
 
-            if self.hook is not None and is_next_ep and epoch % 500 == 0:
+            if self.hook is not None and is_next_ep and epoch % 2 == 0:
                 self.hook()
                 
         if self.hook is not None:
